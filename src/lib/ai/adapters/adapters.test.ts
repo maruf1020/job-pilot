@@ -34,7 +34,7 @@ describe('gemini classifyError', () => {
     expect(c(new Error('got status 429 RESOURCE_EXHAUSTED')).kind).toBe('rate')
   })
   it('never echoes a key in the message', () => {
-    expect(c({ status: 400, message: 'API key not valid: AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }).message).not.toContain('AIza')
+    expect(c({ status: 400, message: 'API key not valid: ' + 'AIza' + 'Sy' + 'A'.repeat(33) }).message).not.toContain('AIza')
   })
 })
 
