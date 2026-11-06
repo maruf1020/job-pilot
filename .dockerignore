@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+e2e/.auth
+test-results
+playwright-report
+storage
+*.pdf
+New Text Document.txt
+.privacy-denylist
+database/knowledge/jobs*.ndjson.gz

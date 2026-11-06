@@ -1,0 +1,1022 @@
+// ============================================================================
+// Job Pilot — Prisma schema (Prisma 7, driver adapter: @prisma/adapter-pg)
+//
+// Conventions
+// - String "enum" columns (documented per field) + TS const unions in src/lib/domain.
+// - Soft flags (skipped / blacklisted / enabled) instead of deletes so counts stay honest.
+// - Every row has createdAt/updatedAt.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ----------------------------------------------------------------------------
+// Auth: one owner per install. The first visit creates the account (/setup), the owner then
+// logs in with the name and fills the onboarding form. "Remove my data" deletes this row.
+// ----------------------------------------------------------------------------
+
+model User {
+  id                  String    @id @default(cuid())
+  /** Login name, stored lowercase. */
+  username            String    @unique
+  /** The name as typed at setup. */
+  name                String
+  /** Optional: used for Google sign-in and as the digest address fallback. */
+  email               String?   @unique
+  passwordHash        String
+  /** Bumped when the password changes or the account is removed: every older session stops working. */
+  sessionVersion      Int       @default(0)
+  /** Set when the onboarding form is finished; until then every page leads to /onboarding. */
+  onboardedAt         DateTime?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// ----------------------------------------------------------------------------
+// Settings (singleton row id=1) — grouped JSON configs validated by zod in
+// src/lib/settings/schema.ts so weights/queries change without migrations.
+// ----------------------------------------------------------------------------
+
+model Settings {
+  id                    Int      @id @default(1)
+  searchIntervalMinutes Int      @default(720)
+  searchEnabled         Boolean  @default(true)
+  timezone              String   @default("UTC")
+  digestEnabled         Boolean  @default(true)
+  digestHourLocal       Int      @default(9)
+  digestEmail           String?
+  /** Phone notifications (ntfy/Telegram from .env) and the notification types that go to the phone. */
+  pushEnabled           Boolean  @default(true)
+  pushTypes             String[] @default(["interview", "reply", "review_needed", "error"])
+  search                Json // SearchConfig
+  ranking               Json // RankingConfig
+  email                 Json // EmailConfig
+  ai                    Json // AiConfig
+  portal                Json? // PortalConfig (browser apply agent)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// ----------------------------------------------------------------------------
+// Candidate profile + resume
+// ----------------------------------------------------------------------------
+
+/**
+ * Everything about the person the app applies for. Filled by the onboarding form (and the CV parse);
+ * prompts, form answers and rules read it through src/lib/candidate/context.ts. Nothing about a
+ * person is hard-coded anywhere else.
+ */
+model CandidateProfile {
+  id              Int      @id @default(1)
+  fullName        String
+  headline        String   @default("")
+  email           String?
+  phone           String?
+  /** "City, Country" as written on applications. */
+  location        String   @default("")
+  yearsExperience Float    @default(0)
+  summary         String   @default("") @db.Text
+  // --- name parts (forms ask for them separately) ---
+  givenName       String?
+  familyName      String?
+  preferredName   String?
+  pronouns        String?
+  gender          String? // as the person wants it written; null = prefer not to say
+  dateOfBirth     String? // YYYY-MM-DD, optional
+  // --- contact and address ---
+  phoneCountryCode String? // e.g. +351
+  addressLine     String?
+  postalCode      String?
+  city            String?
+  region          String?
+  country         String? // ISO 3166-1 alpha-2 of residence
+  timezone        String? // IANA, e.g. Europe/Lisbon
+  citizenships    String[] @default([]) // ISO2
+  /** {linkedin, github, portfolio, behance, dribbble, x, website} */
+  links           Json?
+  // --- career target ---
+  /** software | design | data | product | marketing | sales | operations | other */
+  profession      String   @default("software")
+  /** Free text when profession is "other" (e.g. "Architecture"). */
+  field           String?
+  /** junior | mid | senior | lead | principal | manager */
+  seniority       String[] @default([])
+  // --- work rights ---
+  /** {needsSponsorship: bool, rightToWork: ISO2[], authorizationText: string} */
+  workAuth        Json?
+  relocation      String?  // yes | no | maybe
+  remote          String?  // only | ok | no
+  /** [{name, level}] level: native | fluent | professional | conversational | basic */
+  languageLevels  Json?
+  degree          String?  // highest degree, e.g. "Bachelor's"
+  gpa             String?
+  /** Optional diversity answers; anything missing is answered "Prefer not to say". */
+  diversity       Json?
+  /** {tone, neverMention[], leadWith[], signOff} */
+  emailVoice      Json?
+  salaryCurrency  String?
+  /** Salary is given only when a form or email requires it. */
+  salaryOnlyWhenAsked Boolean @default(true)
+  howHeard        String?
+  /** Why the person is looking (forms ask "why are you leaving"). */
+  motivation      String?  @db.Text
+  skills          String[] @default([])
+  titles          String[] @default([]) // target job titles
+  facts           String[] @default([]) // concrete, quotable achievements
+  stopSkills      String[] @default([]) // skills the email must never claim
+  languages       String[] @default([])
+  experience      Json? // [{company, title, from, to, bullets[]}]
+  education       Json? // [{school, degree, year}]
+  signature       String?  @db.Text // email sign-off block
+  /** How the candidate thinks about the craft; used sparingly and humbly in emails. */
+  mindset         String?  @db.Text
+  noticePeriod    String?
+  salaryExpectation String?
+  earliestStart   String?
+  resumeText      String?  @db.Text
+  parsedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model ResumeFile {
+  id        String    @id @default(cuid())
+  fileName  String
+  mimeType  String
+  sizeBytes Int
+  sha256    String
+  data      Bytes
+  isActive  Boolean   @default(true)
+  parsedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// ----------------------------------------------------------------------------
+// Companies & jobs
+// ----------------------------------------------------------------------------
+
+model Company {
+  id             String    @id @default(cuid())
+  name           String
+  normalizedName String    @unique
+  domain         String?
+  countryCode    String?
+  atsType        String? // greenhouse | lever | ashby | workable | smartrecruiters
+  atsSlug        String?
+  careersUrl     String?
+  contactEmail   String?
+  contactEmailSource String? // posting | company | website | search | verified | guessed | manual
+  contactCandidates  String[]  @default([])
+  contactCheckedAt   DateTime?
+  contactNotes       String? // e.g. "catch-all domain", "port 25 blocked", pages crawled
+  knownSponsor   Boolean   @default(false)
+  blacklisted    Boolean   @default(false)
+  notes          String?   @db.Text
+  lastFetchedAt  DateTime?
+  lastFetchError String?
+  /** How the ATS board was found: job-link | register | probe | curated | manual */
+  boardSource    String?
+  /** Last time board discovery probed this company (so it is not probed every run). */
+  boardCheckedAt DateTime?
+  /** Jobs on the board that match the search rules (title, stack, location or remote) when it was last read; null = never counted. */
+  boardMatchingJobs Int?
+  boardMatchedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  jobs           Job[]
+
+  @@index([atsType, atsSlug])
+  @@index([knownSponsor])
+  @@index([contactCheckedAt])
+  @@index([boardMatchingJobs])
+}
+
+/** A batch "find contact emails" run (companies grouped, processed batch by batch by the worker). */
+model ContactDiscoveryRun {
+  id              String    @id @default(cuid())
+  status          String // RUNNING | COMPLETED | CANCELLED | FAILED
+  scope           String // above_threshold | all_ranked | all_companies
+  batchSize       Int       @default(10)
+  total           Int       @default(0)
+  processed       Int       @default(0)
+  found           Int       @default(0)
+  verified        Int       @default(0)
+  guessed         Int       @default(0)
+  jobsUpdated     Int       @default(0)
+  cancelRequested Boolean   @default(false)
+  error           String?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, startedAt])
+}
+
+/**
+ * A "find public job boards" run (Companies page): the worker probes the ATS APIs company by company and
+ * writes its progress here, like ContactDiscoveryRun does for contact emails. The UI polls this row.
+ */
+model BoardDiscoveryRun {
+  id              String              @id @default(cuid())
+  status          String // RUNNING | COMPLETED | CANCELLED | FAILED
+  mode            String // sponsors | repair | all | harvest
+  /// "Companies per run" asked for.
+  limit           Int                 @default(150)
+  includeChecked  Boolean             @default(false)
+  total           Int                 @default(0)
+  checked         Int                 @default(0)
+  boardsFound     Int                 @default(0)
+  /// Found boards that list at least one job matching the portal rules (dev title, stack, Europe or remote).
+  boardsRelevant  Int                 @default(0)
+  /// Jobs matching those rules across the found boards.
+  relevantJobs    Int                 @default(0)
+  /// Repair mode: boards that stopped answering and were removed.
+  dead            Int                 @default(0)
+  errors          Int                 @default(0)
+  requests        Int                 @default(0)
+  /// { greenhouse: 3, lever: 1, ... } boards found per ATS.
+  perAtsCounts    Json                @default("{}")
+  /// Companies with no board found by any method (they are only counted, never saved).
+  noBoard         Int                 @default(0)
+  /// { slug: {found, saved}, careers: {...}, gemini: {...} }: boards found per method and how many had matching jobs.
+  perMethod       Json                @default("{}")
+  /// repair | find | count: what the run is doing now.
+  phase           String?
+  /// Times the worker picked this run up again after a restart.
+  resumes         Int                 @default(0)
+  currentCompany  String?
+  cancelRequested Boolean             @default(false)
+  error           String?
+  startedAt       DateTime            @default(now())
+  finishedAt      DateTime?
+  lastTickAt      DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  logs            BoardDiscoveryLog[]
+
+  @@index([status, startedAt])
+}
+
+/** One line of the live feed of a board discovery run. */
+model BoardDiscoveryLog {
+  id           String            @id @default(cuid())
+  runId        String
+  run          BoardDiscoveryRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  level        String // found | none | error | dead | info
+  message      String
+  companyName  String?
+  atsType      String?
+  atsSlug      String?
+  /// Jobs matching the portal rules on the board that was found (null when not fetched).
+  relevantJobs Int?
+  createdAt    DateTime          @default(now())
+
+  @@index([runId, createdAt])
+  @@index([createdAt])
+}
+
+/** Hard daily caps for third-party APIs (e.g. Google Programmable Search: 100 calls/day). */
+model ApiQuota {
+  id        String   @id @default(cuid())
+  provider  String
+  day       String // YYYY-MM-DD in the provider's reset timezone
+  used      Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, day])
+}
+
+/**
+ * Official sponsor registers: Ireland (employment permits issued per company), the UK
+ * (licensed sponsors, Skilled Worker route) and the Netherlands (IND recognised sponsors).
+ * Matched by normalised company name to mark companies as known sponsors.
+ */
+model SponsorRegister {
+  id             String   @id @default(cuid())
+  country        String // IE | GB | NL
+  name           String
+  normalizedName String
+  route          String?
+  permits        Int?
+  city           String?
+  source         String
+  importedAt     DateTime @default(now())
+
+  @@unique([country, normalizedName])
+  @@index([normalizedName])
+}
+
+/** Heartbeat of the (single) worker process so the UI can tell "asleep" from "down". */
+model WorkerStatus {
+  id          Int       @id @default(1)
+  state       String // active | sleeping | stopped
+  heartbeatAt DateTime
+  nextWakeAt  DateTime?
+  hostname    String?
+  version     String?
+  /** Apply browser as seen by the worker: { state, port, profileDir, chromePath, version, tabs, checkedAt }. */
+  browser     Json?
+  updatedAt   DateTime  @updatedAt
+}
+
+model Job {
+  id                String    @id @default(cuid())
+  dedupeKey         String    @unique
+  title             String
+  companyId         String
+  company           Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  companyName       String // denormalized for search/sort
+  url               String
+  /** Board-only postings (Adzuna, Jooble...): when the employer's own form link was last looked for. */
+  employerLinkCheckedAt DateTime?
+  location          String?
+  countryCode       String? // ISO-3166 alpha-2
+  remote            Boolean   @default(false)
+  description       String    @db.Text
+  salaryMin         Int?
+  salaryMax         Int?
+  currency          String?
+  postedAt          DateTime?
+  firstSeenAt       DateTime  @default(now())
+  lastSeenAt        DateTime  @default(now())
+  primarySource     String
+  tags              String[]  @default([])
+  // sponsorship & enrichment
+  visaFlag          Boolean? // explicit flag from the source, if any
+  sponsorship       String    @default("unknown") // yes | likely | unknown | no
+  sponsorshipEvidence String[] @default([])
+  applyChannel      String    @default("unknown") // email | ats | portal | unknown
+  atsType           String?
+  contactEmail      String?
+  contactEmailSource String? // posting | company | website | guessed | manual
+  contactCandidates String[]  @default([]) // remaining addresses to try after a bounce
+  contactCheckedAt  DateTime?
+  language          String? // ISO-639-3 from franc, or "eng"
+  seniority         String? // junior | mid | senior | lead | staff | manager | unknown
+  mustHaveSkills    String[]  @default([])
+  niceToHaveSkills  String[]  @default([])
+  requiredLanguages String[]  @default([])
+  relocationSupport Boolean?
+  summary           String?   @db.Text
+  enrichedAt        DateTime?
+  // lifecycle
+  status            String    @default("NEW") // NEW | FILTERED | RANKED | DRAFTING | REVIEW | APPLIED | SKIPPED | REJECTED_RULE
+  filterReason      String?
+  /** Denormalised copy of JobScore.finalScore so lists can sort by score with NULLs last. */
+  finalScore        Int?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  sourceLinks  JobSourceLink[]
+  score        JobScore?
+  application  Application?
+
+  @@index([status])
+  @@index([finalScore])
+  @@index([countryCode])
+  @@index([sponsorship])
+  @@index([firstSeenAt])
+  @@index([postedAt])
+  @@index([companyName])
+  @@index([title])
+}
+
+model JobSourceLink {
+  id          String   @id @default(cuid())
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  source      String
+  externalId  String
+  url         String
+  raw         Json?
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([source, externalId])
+  @@index([jobId])
+}
+
+model JobScore {
+  id         String   @id @default(cuid())
+  jobId      String   @unique
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  ruleScore  Int
+  llmScore   Int?
+  finalScore Int
+  breakdown  Json // [{ label, points, detail? }]
+  reasons    String[] @default([])
+  gaps       String[] @default([])
+  hook       String?
+  model      String?
+  scoredAt   DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([finalScore])
+}
+
+// ----------------------------------------------------------------------------
+// Search runs (audit)
+// ----------------------------------------------------------------------------
+
+model SearchRun {
+  id              String    @id @default(cuid())
+  trigger         String // SCHEDULED | MANUAL
+  status          String // RUNNING | COMPLETED | COMPLETED_WITH_ERRORS | FAILED | CANCELLED
+  /** Set by "Stop run"; the pipeline finishes its current batch and stops cleanly. */
+  cancelRequested Boolean   @default(false)
+  /** Touched by the executing worker every ~30 s; a RUNNING run without a recent heartbeat is orphaned. */
+  heartbeatAt     DateTime?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  durationMs      Int?
+  totalFetched    Int       @default(0)
+  totalNew        Int       @default(0)
+  totalDuplicates Int       @default(0)
+  totalFiltered   Int       @default(0)
+  totalEnriched   Int       @default(0)
+  totalRanked     Int       @default(0)
+  totalDrafted    Int       @default(0)
+  totalQueued     Int       @default(0)
+  errorCount      Int       @default(0)
+  errorDetails    Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sources SearchRunSource[]
+  logs    SearchRunLog[]
+
+  @@index([startedAt])
+  @@index([status])
+}
+
+/**
+ * Rotation state per (source, query, country): where the next run should continue, so
+ * runs sweep through every combination and every result page over a few days instead
+ * of repeating the same first page.
+ */
+model SourceCursor {
+  id          String    @id @default(cuid())
+  source      String
+  query       String    @default("")
+  country     String    @default("")
+  nextPage    Int       @default(1)
+  runs        Int       @default(0)
+  lastRunAt   DateTime?
+  /** Set when the last page was reached; the combo rests for `cycleDays` before restarting at page 1. */
+  exhaustedAt DateTime?
+  lastCreated Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([source, query, country])
+  @@index([source, lastRunAt])
+}
+
+model SearchRunSource {
+  id         String   @id @default(cuid())
+  runId      String
+  run        SearchRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  source     String
+  query      String?
+  country    String?
+  requests   Int      @default(0)
+  returned   Int      @default(0)
+  created    Int      @default(0)
+  duplicates Int      @default(0)
+  errors     Int      @default(0)
+  durationMs Int      @default(0)
+  error      String?
+  createdAt  DateTime @default(now())
+
+  @@index([runId])
+}
+
+model SearchRunLog {
+  id        String   @id @default(cuid())
+  runId     String
+  run       SearchRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  level     String // debug | info | warn | error
+  message   String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([runId, createdAt])
+}
+
+// ----------------------------------------------------------------------------
+// Applications, drafts, messages
+// ----------------------------------------------------------------------------
+
+model Application {
+  id             String    @id @default(cuid())
+  jobId          String    @unique
+  job            Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  /** Set when an auto-apply batch prepared this application; the batch is the user's permission to send it. */
+  batchId        String?
+  batch          ApplyBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  /** You chose "apply anyway" despite the company cooldown; the sender honours that choice. Never set automatically. */
+  cooldownOverride Boolean @default(false)
+  channel        String // email | ats | portal
+  status         String // DRAFT | REVIEW | NEEDS_HUMAN | APPROVED | QUEUED | SENT | REPLIED | INTERVIEW | OFFER | REJECTED | NO_RESPONSE | SKIPPED
+  toEmail        String?
+  threadId       String? // Gmail threadId (or SMTP Message-ID root)
+  scheduledFor   DateTime?
+  sentAt         DateTime?
+  repliedAt      DateTime?
+  followUpDueAt  DateTime?
+  followUpSentAt DateTime?
+  /** You approved the next follow-up on the Applications page; cleared once it goes out. */
+  followUpApprovedAt DateTime?
+  followUpCount  Int       @default(0)
+  lastActivityAt DateTime  @default(now())
+  /** Set when the system queued the send; bounces then rotate to the next guessed address automatically. */
+  autoRetry      Boolean   @default(false)
+  bounceCount    Int       @default(0)
+  coverLetter    String?   @db.Text // ATS/portal channel
+  answers        Json? // copyable answers block
+  notes          String?   @db.Text
+  /** Latest browser-agent attempt: QUEUED | RUNNING | AWAITING_REVIEW | SUBMITTED | NEEDS_HUMAN | FAILED | CANCELLED */
+  portalStatus   String?
+  /** Candidate portal page that shows this application's status (e.g. Workday "My applications"). */
+  portalStatusUrl String?
+  portalCheckedAt DateTime?
+  /** How it was sent: email | agent (browser agent) | manual (you, by hand) */
+  submittedVia   String?
+  /** What this send tried (prompt version, model, CV attached, subject style, who started it), so the scoreboard can compare. */
+  experiment     Json?
+  /** CV version uploaded with this application: frontend | fullstack | backend | main */
+  cvVariant      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  drafts   EmailDraft[]
+  messages EmailMessage[]
+  attempts PortalAttempt[]
+  events   ApplicationEvent[]
+
+  @@index([status])
+  @@index([sentAt])
+  @@index([scheduledFor])
+}
+
+model EmailDraft {
+  id              String   @id @default(cuid())
+  applicationId   String
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  kind            String   @default("initial") // initial | follow_up
+  version         Int
+  subject         String
+  body            String   @db.Text
+  lintResult      Json? // LintResult
+  judgeResult     Json? // JudgeResult
+  externalAiScore Float?
+  passed          Boolean  @default(false)
+  isSelected      Boolean  @default(false)
+  generatedBy     String? // model id, or "human"
+  promptVersion   String?
+  feedback        String?  @db.Text // feedback that produced this version
+  createdAt       DateTime @default(now())
+
+  @@unique([applicationId, kind, version])
+  @@index([applicationId])
+}
+
+model EmailMessage {
+  id                 String    @id @default(cuid())
+  applicationId      String
+  application        Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  direction          String // OUTBOUND | INBOUND
+  provider           String // gmail | smtp | imap
+  providerMessageId  String
+  threadId           String?
+  fromAddress        String
+  toAddress          String
+  /** Cc header of an inbound message (a recruiter copied in, for example). */
+  ccAddress          String?
+  subject            String
+  bodyText           String    @db.Text
+  sentAt             DateTime?
+  receivedAt         DateTime?
+  classification     String? // INTERVIEW_REQUEST | POSITIVE | NEEDS_INFO | REJECTION | APPLY_VIA_PORTAL | WRONG_RECIPIENT | AUTO_REPLY | BOUNCE | OTHER
+  classificationMeta Json? // ReplyClassification output: summary, suggestedNextAction, proposedTimes, applyUrl, contact, questions
+  isRead             Boolean   @default(false)
+  /** You dealt with this reply (replied, applied on their site, or dismissed it). */
+  handledAt          DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@unique([provider, providerMessageId])
+  @@index([applicationId])
+  @@index([direction, isRead])
+}
+
+// ----------------------------------------------------------------------------
+// AI keys & usage, banned phrases, notifications, OAuth tokens
+// ----------------------------------------------------------------------------
+
+/**
+ * One API key of any AI provider (src/lib/ai/providers.ts lists them: gemini, anthropic, openai,
+ * deepseek, moonshot, groq, openrouter, mistral, xai, ... or "custom" with a base URL). Added by hand
+ * or imported from pasted .env text; the router picks keys by priority, tier and capability.
+ */
+model AiKey {
+  id            String    @id @default(cuid())
+  label         String
+  provider      String    @default("gemini")
+  /** OpenAI-compatible endpoint for "custom" (Ollama, LM Studio, a proxy) or to override a provider's. */
+  baseUrl       String?
+  projectNumber String?
+  encryptedKey  String
+  keyHint       String // last 4 chars
+  /** sha256 of the key: the same key is never stored twice. */
+  keyHash       String?   @unique
+  /** manual | import */
+  source        String    @default("manual")
+  /** Lower runs first. */
+  priority      Int       @default(100)
+  /** Model ids the provider listed for this key (Discover models). */
+  models        String[]  @default([])
+  /** Model for drafting and hard reasoning; null = the provider's default. */
+  primaryModel  String?
+  /** Cheap, fast model for bulk work (ranking, classification); null = the provider's default. */
+  liteModel     String?
+  /** Overrides of the provider's defaults: {vision, webSearch, json} */
+  capabilities  Json?
+  /** free | paid: paid keys are capped by dailyCallCap instead of the provider's free quota. */
+  plan          String    @default("free")
+  dailyCallCap  Int?
+  enabled       Boolean   @default(true)
+  rpmLimit      Int       @default(10)
+  rpdLimit      Int       @default(250)
+  usedToday     Int       @default(0)
+  usedTodayDate String? // YYYY-MM-DD in the provider's quota day
+  cooldownUntil DateTime?
+  /** ok | failed | unknown (from the last Test). */
+  status        String    @default("unknown")
+  lastTestedAt  DateTime?
+  lastError     String?
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  usage AiUsage[]
+
+  @@index([enabled, priority])
+}
+
+/**
+ * Credentials of non-AI services (job sources, notifications, mail), entered in Settings > Keys or
+ * imported with the AI keys. values = encrypted JSON {field: value}; .env stays an optional fallback.
+ */
+model ServiceKey {
+  id              String    @id @default(cuid())
+  /** adzuna | jooble | rapidapi | reed | francetravail | sapling | google_cse | telegram | ntfy | smtp */
+  service         String    @unique
+  encryptedValues String
+  hint            String
+  enabled         Boolean   @default(true)
+  source          String    @default("manual")
+  lastTestedAt    DateTime?
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+/**
+ * What the form agents learned per kind of application site (shared knowledge, kept when the owner
+ * removes their data). Lessons never hold personal values: they are written with placeholders such as
+ * {city} or {phone} (src/lib/apply/lessons.ts) and filled from the profile when used.
+ */
+model SiteLesson {
+  id          String   @id @default(cuid())
+  /** Site kind from siteKind(): workday, smartrecruiters, ... or a host name. */
+  kind        String
+  host        String?
+  /** lesson (what worked) | diagnosis (why a run stopped, with a fix hint) | fix (second-look fix) */
+  type        String   @default("lesson")
+  /** seed | pinned | submitted | review | diagnosis | fixed */
+  outcome     String?
+  lesson      String   @db.Text
+  category    String?
+  pattern     String?
+  blocker     String?  @db.Text
+  /** sha256 of type|kind|host|lesson: repeats bump hits instead of adding rows. */
+  fingerprint String   @unique
+  hits        Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([kind, type])
+  @@index([host, type])
+}
+
+model AiUsage {
+  id           String   @id @default(cuid())
+  keyId        String?
+  key          AiKey?   @relation(fields: [keyId], references: [id], onDelete: SetNull)
+  provider     String?
+  model        String
+  task         String // enrich | rank | draft | judge | rewrite | classify_reply | parse_resume | follow_up
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  durationMs   Int      @default(0)
+  ok           Boolean  @default(true)
+  error        String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([keyId, createdAt])
+}
+
+/**
+ * Addresses that must never get another application from any job: every bounced address lands
+ * here (a bounce on one job used to block the address only for that company).
+ */
+model SuppressedAddress {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  reason        String
+  source        String   @default("bounce") // bounce | manual
+  applicationId String?
+  createdAt     DateTime @default(now())
+}
+
+model BannedPhrase {
+  id        String   @id @default(cuid())
+  phrase    String   @unique
+  severity  String   @default("error") // error | warn
+  category  String? // buzzword | cliche | opener | transition | punctuation
+  isRegex   Boolean  @default(false)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  type      String // reply | interview | review_needed | run_complete | quota | error | digest | sent
+  title     String
+  body      String?   @db.Text
+  link      String?
+  readAt    DateTime?
+  /** ReplyClassification of the email behind a reply/interview notification. */
+  classification String?
+  /** An employer wants something from you (interview, positive reply, a question): pinned and shown as a popup. */
+  nextStep  Boolean   @default(false)
+  /** You opened or dismissed a next step; it stops being pinned and never pops up again. */
+  ackedAt   DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([readAt, createdAt])
+  @@index([nextStep, ackedAt])
+}
+
+// ----------------------------------------------------------------------------
+// Browser scraping targets (Playwright): list/search pages to visit politely.
+// ----------------------------------------------------------------------------
+
+model ScrapeTarget {
+  id           String    @id @default(cuid())
+  name         String
+  url          String // may contain {page} for pagination
+  enabled      Boolean   @default(true)
+  linkSelector String? // CSS selector for job links; null = heuristic discovery
+  linkPattern  String? // regex the job URL must match; null = heuristic
+  maxLinks     Int       @default(30)
+  maxPages     Int       @default(1)
+  requireEmail Boolean   @default(true)
+  countryCode  String? // default country for jobs found here
+  waitMs       Int       @default(1500)
+  notes        String?   @db.Text
+  lastRunAt    DateTime?
+  lastStatus   String? // ok | error | skipped
+  lastError    String?
+  lastFound    Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model OAuthToken {
+  id                    String    @id @default(cuid())
+  provider              String    @unique // gmail
+  accountEmail          String?
+  encryptedRefreshToken String
+  encryptedAccessToken  String?
+  accessTokenExpiresAt  DateTime?
+  scopes                String[]  @default([])
+  lastHistoryId         String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+/**
+ * Auto-apply batch: the user picks how many applications (2-1000) and the rules once; the
+ * worker then prepares each one exactly like a single application (draft, humanizer, judge),
+ * sends only drafts that pass, one per company per location per cooldown window, best score
+ * first, within the daily send cap and send window. Starting the batch is the permission
+ * for its own applications only; Stop cancels everything not yet sent.
+ */
+model ApplyBatch {
+  id              String    @id @default(cuid())
+  status          String // RUNNING | COMPLETED | CANCELLED | FAILED
+  target          Int
+  minScore        Int
+  includeGuessed  Boolean   @default(false)
+  /** Continuous mode: no end; keeps applying to new good matches as searches find them, until stopped. */
+  continuous      Boolean   @default(false)
+  countries       String[]  @default([])
+  considered      Int       @default(0)
+  drafted         Int       @default(0)
+  queued          Int       @default(0)
+  sent            Int       @default(0)
+  held            Int       @default(0)
+  skipped         Int       @default(0)
+  cancelRequested Boolean   @default(false)
+  waitingFor      String? // why it is idle right now (AI quota, daily cap, …)
+  note            String?
+  lastTickAt      DateTime?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  updatedAt       DateTime  @updatedAt
+  applications    Application[]
+
+  @@index([status])
+}
+
+// ----------------------------------------------------------------------------
+// Browser apply agent (see plan-browser-apply.md)
+// ----------------------------------------------------------------------------
+
+/**
+ * One run of the browser agent for one application: find the form, fill it, and either stop
+ * for review (mode "fill") or submit (mode "submit"). Keeps the step log, the answers given,
+ * the questions it could not answer and screenshots.
+ */
+model PortalAttempt {
+  id               String       @id @default(cuid())
+  applicationId    String
+  application      Application  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  batchId          String?
+  batch            PortalBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  mode             String // fill | submit
+  status           String // QUEUED | RUNNING | AWAITING_REVIEW | SUBMITTED | NEEDS_HUMAN | FAILED | CANCELLED
+  atsType          String?
+  startUrl         String?
+  formUrl          String?
+  finalUrl         String?
+  /** CDP target id of the tab left open (review or human help), so a later action can continue in it. */
+  tabId            String?
+  steps            Json? // [{ at, level, message }]
+  fields           Json? // [{ label, kind, value, source, required, frameUrl }]
+  questions        Json? // [{ label, kind, options, required, reason }]
+  screenshots      String[]     @default([])
+  needsHumanReason String?
+  error            String?
+  /** Why it stopped, read by Gemini from a screenshot of the page: { category, pattern, blocker, field, fixHint, at } */
+  diagnosis        Json?
+  aiCalls          Int          @default(0)
+  /** Host of the form (or of the start page when no form was reached), for the host triage table. */
+  host             String?
+  /** Apply lane: ats | other | gated | linkedin | single */
+  lane             String?
+  startedAt        DateTime     @default(now())
+  finishedAt       DateTime?
+  updatedAt        DateTime     @updatedAt
+
+  @@index([applicationId, startedAt])
+  @@index([status])
+  @@index([batchId])
+  @@index([host])
+}
+
+/**
+ * What the browser agent learned about a website: what kind of page it is, how often forms there
+ * end submitted, and whether to skip it for a while. Batches order candidates by it and skip hosts
+ * that keep failing for the same reason.
+ */
+model HostProfile {
+  host          String    @id
+  /** direct-form | ats-embed | needs-account | sign-in-wall | talent-community | external-redirect | bot-wall | captcha | no-form | closed | unknown */
+  kind          String    @default("unknown")
+  /** ATS found behind this host (greenhouse, lever, ashby, workday...), when detected. */
+  atsType       String?
+  attempts      Int       @default(0)
+  submitted     Int       @default(0)
+  needsHuman    Int       @default(0)
+  failed        Int       @default(0)
+  /** Same-reason failures in a row; reset by a submission. */
+  failStreak    Int       @default(0)
+  lastOutcome   String?
+  lastReason    String?
+  /** Batches skip this host until then (null = not skipped). */
+  skipUntil     DateTime?
+  /** You signed in once in the apply browser; the session is kept in its profile. */
+  loggedIn      Boolean   @default(false)
+  notes         String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([kind])
+  @@index([skipUntil])
+}
+
+/**
+ * Browser auto-apply batch. Starting it (mode "submit") is the permission for its own
+ * applications only; Stop cancels everything not yet submitted.
+ */
+model PortalBatch {
+  id              String    @id @default(cuid())
+  status          String // RUNNING | COMPLETED | CANCELLED | FAILED
+  mode            String // fill | submit
+  target          Int
+  continuous      Boolean   @default(false)
+  minScore        Int
+  countries       String[]  @default([])
+  atsTypes        String[]  @default([])
+  considered      Int       @default(0)
+  submitted       Int       @default(0)
+  awaitingReview  Int       @default(0)
+  needsHuman      Int       @default(0)
+  failed          Int       @default(0)
+  skipped         Int       @default(0)
+  cancelRequested Boolean   @default(false)
+  waitingFor      String?
+  note            String?
+  lastTickAt      DateTime?
+  nextAttemptAt   DateTime?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  updatedAt       DateTime  @updatedAt
+  attempts        PortalAttempt[]
+
+  @@index([status])
+}
+
+/** Your answers to application-form questions, reused on every form. answer = null: waiting for you. */
+model AnswerBank {
+  id          String   @id @default(cuid())
+  /** Normalised question text (lowercase, no punctuation) used for lookups. */
+  key         String   @unique
+  question    String
+  answer      String?  @db.Text
+  kind        String   @default("text") // text | choice | yesno | number | date | textarea
+  options     String[] @default([])
+  source      String   @default("user") // user | profile | ai | seed
+  timesSeen   Int      @default(1)
+  lastCompany String?
+  lastSeenAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([answer])
+}
+
+/** A login the agent uses on an application site (one per Workday tenant, for example). */
+model PortalAccount {
+  id                String    @id @default(cuid())
+  host              String    @unique
+  email             String
+  encryptedPassword String
+  status            String    @default("active") // active | unverified | failed
+  /** Candidate home that lists your applications on this site (for the daily status check). */
+  statusUrl         String?
+  lastLoginAt       DateTime?
+  lastError         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+/** Application timeline: filled, submitted, confirmation, status changes. */
+model ApplicationEvent {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  type          String // filled | submitted | needs_human | confirmation | status | email | note
+  message       String
+  meta          Json?
+  createdAt     DateTime    @default(now())
+
+  @@index([applicationId, createdAt])
+}
+
+/** Gmail messages the inbox scan has already read (matched or not), so each is processed once. */
+model InboxMessage {
+  id            String   @id // Gmail message id
+  threadId      String?
+  fromAddress   String
+  subject       String
+  receivedAt    DateTime?
+  /** confirmation | rejection | interview | positive | needs_info | offer | verification | other | unmatched */
+  kind          String
+  applicationId String?
+  createdAt     DateTime @default(now())
+
+  @@index([applicationId])
+  @@index([createdAt])
+}

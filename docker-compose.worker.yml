@@ -1,0 +1,18 @@
+# Worker only, against a hosted database (Neon). For a small always-on box:
+#   cp .env.production.example .env.worker   (fill in; DATABASE_URL = Neon *direct* URL)
+#   docker compose -f docker-compose.worker.yml up -d --build
+# Logs: docker compose -f docker-compose.worker.yml logs -f
+services:
+  worker:
+    build: .
+    image: job-pilot:latest
+    restart: unless-stopped
+    env_file: .env.worker
+    command: npm run worker
+    # Chromium (scraping, deep fetch, contact crawl of bot-gated sites) needs shared memory
+    shm_size: "1gb"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

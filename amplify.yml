@@ -1,0 +1,27 @@
+# AWS Amplify Hosting build spec (Next.js SSR, platform WEB_COMPUTE).
+# Only the web app runs here; the worker runs elsewhere (see README, Deployment).
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - nvm install 22
+        - nvm use 22
+        - node -v
+        - npm ci --include=dev
+    build:
+      commands:
+        # Amplify exposes environment variables at build time only. The server needs them at
+        # runtime, so the server-only ones are written into .env.production, which Next.js
+        # bundles for the server (never for the browser: nothing here is NEXT_PUBLIC_).
+        - env | grep -E '^(DATABASE_URL|DIRECT_DATABASE_URL|APP_URL|AUTH_URL|AUTH_SECRET|AUTH_TRUST_HOST|APP_ENCRYPTION_KEY|TZ|GEMINI_API_KEYS|ANTHROPIC_API_KEY|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|ADZUNA_APP_ID|ADZUNA_APP_KEY|JOOBLE_KEY|RAPIDAPI_KEY|REED_KEY|FRANCETRAVAIL_CLIENT_ID|FRANCETRAVAIL_CLIENT_SECRET|SAPLING_KEY|GOOGLE_CSE_KEY|GOOGLE_CSE_CX|SMTP_HOST|SMTP_PORT|SMTP_USER|SMTP_PASS|SMTP_FROM|CONTACT_VERIFY_IN_WEB)=' >> .env.production
+        - npx prisma generate
+        - npx next build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*

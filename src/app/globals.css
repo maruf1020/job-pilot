@@ -1,0 +1,301 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Country flags: Windows has no flag emoji and shows the two letters instead ("DE DE").
+ * This font holds only the flag glyphs (Twemoji, CC-BY 4.0, see public/fonts/README.md);
+ * the unicode-range keeps it out of every other character.
+ */
+@font-face {
+  font-family: 'Twemoji Country Flags';
+  src: url('/fonts/TwemojiCountryFlags.woff2') format('woff2');
+  unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0062-E0063, U+E0065, U+E0067, U+E006C, U+E006E, U+E0073-E0074, U+E0077, U+E007F;
+  font-display: swap;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: 'Twemoji Country Flags', var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Design system (plan-ui-redesign.md): one accent, semantic roles with a soft surface and a readable text tone. */
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-text: var(--primary-text);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-text: var(--success-text);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-text: var(--warning-text);
+  --color-danger: var(--destructive);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-text: var(--danger-text);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-text: var(--info-text);
+  --color-border-strong: var(--border-strong);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --shadow-card: 0 1px 2px 0 oklch(0.2 0.01 70 / 0.05);
+  --shadow-pop: 0 8px 24px -6px oklch(0.2 0.01 70 / 0.16), 0 2px 6px -2px oklch(0.2 0.01 70 / 0.08);
+}
+
+/*
+ * Palette "Graphite & Petrol" (plan-ui-redesign.md): warm graphite neutrals, one petrol-teal
+ * accent for primary actions, links, focus and the active nav item; blue is reserved for info.
+ * Page background sits a step below cards, so cards read as surfaces without heavy shadows.
+ * Text pairs meet WCAG AA (4.5:1) on their surfaces in both themes.
+ */
+:root {
+  --background: oklch(0.982 0.003 85);
+  --foreground: oklch(0.22 0.01 70);
+  --surface: oklch(0.982 0.003 85);
+  --surface-raised: oklch(0.998 0.001 85);
+  --card: oklch(0.998 0.001 85);
+  --card-foreground: oklch(0.22 0.01 70);
+  --popover: oklch(0.998 0.001 85);
+  --popover-foreground: oklch(0.22 0.01 70);
+  --primary: oklch(0.5 0.1 212);
+  --primary-foreground: oklch(0.99 0.002 85);
+  --primary-soft: oklch(0.955 0.024 205);
+  --primary-text: oklch(0.43 0.09 215);
+  --secondary: oklch(0.952 0.005 85);
+  --secondary-foreground: oklch(0.26 0.01 70);
+  --muted: oklch(0.957 0.004 85);
+  --muted-foreground: oklch(0.49 0.012 70);
+  --accent: oklch(0.945 0.006 85);
+  --accent-foreground: oklch(0.22 0.01 70);
+  --destructive: oklch(0.55 0.2 27);
+  --danger-soft: oklch(0.962 0.02 27);
+  --danger-text: oklch(0.47 0.17 27);
+  --success: oklch(0.57 0.13 152);
+  --success-soft: oklch(0.958 0.03 152);
+  --success-text: oklch(0.41 0.1 152);
+  --warning: oklch(0.74 0.15 72);
+  --warning-soft: oklch(0.965 0.04 85);
+  --warning-text: oklch(0.46 0.1 60);
+  --info: oklch(0.58 0.14 256);
+  --info-soft: oklch(0.957 0.022 256);
+  --info-text: oklch(0.45 0.13 258);
+  --border: oklch(0.91 0.005 85);
+  --border-strong: oklch(0.85 0.007 85);
+  --input: oklch(0.87 0.007 85);
+  --ring: oklch(0.5 0.1 212);
+  /* Categorical chart slots, used in this fixed order (petrol, orange, violet, yellow; 5 = neutral).
+     Validated with the dataviz checker against the card surface: lightness band, chroma, colour-blind
+     and normal-vision separation of neighbours. Yellow is under 3:1 on white: label it or show a table. */
+  --chart-1: #007ea2;
+  --chart-2: #eb6834;
+  --chart-3: #6250d6;
+  --chart-4: #eda100;
+  --chart-5: oklch(0.62 0.015 70);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.963 0.005 85);
+  --sidebar-foreground: oklch(0.33 0.01 70);
+  --sidebar-primary: oklch(0.5 0.1 212);
+  --sidebar-primary-foreground: oklch(0.99 0.002 85);
+  --sidebar-accent: oklch(0.92 0.007 85);
+  --sidebar-accent-foreground: oklch(0.19 0.01 70);
+  --sidebar-border: oklch(0.91 0.005 85);
+  --sidebar-ring: oklch(0.5 0.1 212);
+  --header-height: 3.5rem;
+  color-scheme: light;
+}
+
+/* Dark: warm charcoal, cards one step lighter, sidebar one step darker. */
+.dark {
+  --background: oklch(0.165 0.006 70);
+  --foreground: oklch(0.95 0.004 85);
+  --surface: oklch(0.165 0.006 70);
+  --surface-raised: oklch(0.2 0.007 70);
+  --card: oklch(0.198 0.007 70);
+  --card-foreground: oklch(0.95 0.004 85);
+  --popover: oklch(0.215 0.007 70);
+  --popover-foreground: oklch(0.95 0.004 85);
+  --primary: oklch(0.74 0.11 205);
+  --primary-foreground: oklch(0.18 0.02 220);
+  --primary-soft: oklch(0.74 0.11 205 / 15%);
+  --primary-text: oklch(0.82 0.09 205);
+  --secondary: oklch(0.25 0.007 70);
+  --secondary-foreground: oklch(0.94 0.004 85);
+  --muted: oklch(0.24 0.007 70);
+  --muted-foreground: oklch(0.72 0.012 80);
+  --accent: oklch(0.26 0.008 70);
+  --accent-foreground: oklch(0.96 0.004 85);
+  --destructive: oklch(0.68 0.18 25);
+  --danger-soft: oklch(0.68 0.18 25 / 15%);
+  --danger-text: oklch(0.79 0.12 25);
+  --success: oklch(0.71 0.14 152);
+  --success-soft: oklch(0.71 0.14 152 / 14%);
+  --success-text: oklch(0.81 0.12 152);
+  --warning: oklch(0.8 0.14 75);
+  --warning-soft: oklch(0.8 0.14 75 / 14%);
+  --warning-text: oklch(0.87 0.11 82);
+  --info: oklch(0.72 0.12 256);
+  --info-soft: oklch(0.72 0.12 256 / 14%);
+  --info-text: oklch(0.82 0.09 256);
+  --border: oklch(1 0 0 / 9%);
+  --border-strong: oklch(1 0 0 / 15%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.74 0.11 205);
+  /* The same four hues stepped for the dark card surface (validated separately, not flipped). */
+  --chart-1: #1195b4;
+  --chart-2: #d95926;
+  --chart-3: #9085e9;
+  --chart-4: #c98500;
+  --chart-5: oklch(0.64 0.015 70);
+  --sidebar: oklch(0.145 0.006 70);
+  --sidebar-foreground: oklch(0.78 0.01 80);
+  --sidebar-primary: oklch(0.74 0.11 205);
+  --sidebar-primary-foreground: oklch(0.18 0.02 220);
+  --sidebar-accent: oklch(0.23 0.008 70);
+  --sidebar-accent-foreground: oklch(0.97 0.004 85);
+  --sidebar-border: oklch(1 0 0 / 7%);
+  --sidebar-ring: oklch(0.74 0.11 205);
+  --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 0.3);
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'ss01', 'cv11';
+    text-rendering: optimizeLegibility;
+  }
+  html {
+    @apply font-sans;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 22%, transparent);
+  }
+  /* Keyboard focus is always visible: a 2px accent outline offset from the element. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  [data-slot='select-trigger']:focus-visible,
+  [data-slot='button']:focus-visible {
+    outline: none;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+/* ---------------------------------------------------------------------------
+ * Pointer cursor on everything clickable. Tailwind v4's preflight sets buttons
+ * to `cursor: default`, and Base UI controls render as spans/divs with ARIA roles.
+ * ------------------------------------------------------------------------- */
+@layer base {
+  button,
+  a[href],
+  select,
+  summary,
+  [role='button'],
+  [role='link'],
+  [role='tab'],
+  [role='menuitem'],
+  [role='menuitemcheckbox'],
+  [role='menuitemradio'],
+  [role='option'],
+  [role='switch'],
+  [role='checkbox'],
+  [role='radio'],
+  [role='combobox'],
+  [role='slider'],
+  [data-slot='select-trigger'],
+  [data-slot='sidebar-menu-button'],
+  [data-slot='sidebar-trigger'],
+  [data-slot='collapsible-trigger'],
+  [data-slot='dropdown-menu-trigger'],
+  [data-slot='popover-trigger'],
+  [data-slot='dialog-trigger'],
+  [data-slot='sheet-trigger'],
+  [data-slot='tooltip-trigger'],
+  [data-slot='toggle'],
+  [data-slot='toggle-group-item'],
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='file'],
+  input[type='date'],
+  label:has(> input[type='checkbox']),
+  label:has(> input[type='radio']),
+  label:has(> [role='switch']),
+  label:has(> [role='checkbox']),
+  th button,
+  .cursor-pointer {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled='true'],
+  [data-disabled],
+  input:disabled,
+  select:disabled {
+    cursor: not-allowed;
+  }
+}
